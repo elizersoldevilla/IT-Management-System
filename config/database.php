@@ -24,6 +24,11 @@ define('APP_URL', env('APP_URL', ''));
 define('CRON_SECRET', env('CRON_SECRET', ''));
 define('MAIL_FROM_ADDRESS', env('MAIL_FROM_ADDRESS', 'noreply@localhost'));
 define('MAIL_FROM_NAME', env('MAIL_FROM_NAME', 'IT Management System'));
+define('MAIL_HOST', env('MAIL_HOST', ''));
+define('MAIL_PORT', env('MAIL_PORT', '587'));
+define('MAIL_USER', env('MAIL_USER', ''));
+define('MAIL_PASS', env('MAIL_PASS', ''));
+define('MAIL_ENCRYPTION', env('MAIL_ENCRYPTION', 'tls'));
 
 try {
     $pdo = new PDO("mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=utf8mb4", DB_USER, DB_PASS);

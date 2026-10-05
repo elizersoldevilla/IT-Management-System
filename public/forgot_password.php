@@ -17,7 +17,8 @@ if (is_logged_in()) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $input = clean_input($_POST['username_or_email']);
+    verify_csrf();
+    $input = trim($_POST['username_or_email'] ?? '');
     
     if (empty($input)) {
         $error = "Please enter your username or email.";
@@ -28,26 +29,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = "Too many requests. Please try again in 15 minutes.";
         } else {
             
-            $stmt = $pdo->prepare("SELECT id, username, full_name, email FROM users WHERE username = :input OR email = :input");
+            $stmt = $pdo->prepare("SELECT id, username, full_name, email FROM users WHERE (username = :input OR email = :input) AND status = 'active'");
             $stmt->execute(['input' => $input]);
             $user = $stmt->fetch();
 
             if ($user) {
-                $token = bin2hex(random_bytes(32));
-                $expires = date('Y-m-d H:i:s', time() + 3600);
+                try {
+                    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 
-                $stmt = $pdo->prepare("UPDATE users SET password_reset_token = ?, password_reset_expires = ? WHERE id = ?");
-                $stmt->execute([$token, $expires, $user['id']]);
+                    // Supersede any earlier open request rather than blocking the user.
+                    $stmt = $pdo->prepare("UPDATE password_reset_requests
+                                           SET status = 'expired'
+                                           WHERE user_id = ? AND status IN ('pending','approved')");
+                    $stmt->execute([$user['id']]);
 
-                $reset_link = 'http://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/IT%20Management%20System/public/reset_password.php?token=' . $token;
-                $subject = "Password Reset Request";
-                $body = "Hello {$user['full_name']},\n\nClick the link below to reset your password:\n\n$reset_link\n\nThis link will expire in 1 hour.\n\nIf you did not request this, please ignore this email.";
+                    $code = (string) random_int(100000, 999999);
+                    $expires = date('Y-m-d H:i:s', time() + 900); // 15 minutes
 
-                send_email($user['email'], $subject, $body);
-                log_action($pdo, $user['id'], 'PASSWORD_RESET_REQUESTED', "Password reset requested for {$user['username']}");
+                    $stmt = $pdo->prepare("INSERT INTO password_reset_requests
+                                           (user_id, requested_ip, status, verification_code_hash, verification_expires)
+                                           VALUES (?, ?, 'approved', ?, ?)");
+                    $stmt->execute([$user['id'], $ip, hash('sha256', $code), $expires]);
+
+                    log_action($pdo, $user['id'], 'PASSWORD_RESET_REQUESTED', "Password reset code issued for {$user['username']} from IP $ip");
+
+                    $body = "Hello {$user['full_name']},\n\n"
+                          . "Your IT Management System verification code is:\n\n"
+                          . "    {$code}\n\n"
+                          . "This code expires in 15 minutes and can be used only once.\n\n"
+                          . "Enter it on the verification page to choose a new password.\n"
+                          . "If you did not request this, no action is needed - your password will not change.";
+
+                    if (!send_email($user['email'], 'Your IT Management System verification code', $body)) {
+                        error_log("Password reset code email failed for {$user['username']} ({$user['id']})");
+                    }
+                } catch (Exception $e) {
+                    error_log("Password Reset Request Error: " . $e->getMessage());
+                }
             }
             
-            $success = "If an account matches that username or email, a password reset link has been sent.";
+            $success = "If an account matches that username or email, a verification code has been sent to the email address on file.";
         }
     }
 }
@@ -165,6 +186,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
             <h2 class="h3 fw-bold mb-2">Forgot Password?</h2>
             <p class="text-secondary">Enter your username or email to request a reset.</p>
+            <p class="text-secondary small mt-2">We will email a 6-digit verification code to the address on file. The code expires in 15 minutes.</p>
+            <p class="text-secondary small mt-2">Already have a code? <a href="verify_email.php" class="text-secondary fw-bold" style="text-decoration: underline;">Verify it here</a>.</p>
         </div>
 
         <?php if ($error): ?>
@@ -180,6 +203,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div><?php echo $success; ?></div>
             </div>
             <div class="text-center mt-4">
+                <a href="verify_email.php" class="btn btn-primary-glow w-100 py-3 rounded-3 fw-medium mb-3">
+                    <i class="fas fa-shield-alt me-2"></i> I have a verification code
+                </a>
                 <a href="login.php" class="btn btn-outline-light w-100 py-3 rounded-3 fw-medium">
                     <i class="fas fa-arrow-left me-2"></i> Return to Login
                 </a>
@@ -187,6 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php else: ?>
 
             <form action="" method="POST">
+                <?php csrf_field(); ?>
                 <div class="form-floating mb-4">
                     <input type="text" class="form-control" id="username_or_email" name="username_or_email" placeholder="Username or Email" required autocomplete="off">
                     <label for="username_or_email">Username or Email</label>

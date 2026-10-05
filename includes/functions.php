@@ -569,22 +569,56 @@ function send_email($to, $subject, $body)
         return false;
     }
 
-    $headers = [
-        'MIME-Version: 1.0',
-        'Content-Type: text/plain; charset=UTF-8',
-        'From: ' . MAIL_FROM_NAME . ' <' . MAIL_FROM_ADDRESS . '>',
-        'Reply-To: ' . MAIL_FROM_NAME . ' <' . MAIL_FROM_ADDRESS . '>',
-        'X-Mailer: PHP/' . phpversion()
-    ];
-
-    $log_entry = "[" . date('Y-m-d H:i:s') . "] To: $to | Subject: $subject | Body: " . str_replace(["\r", "\n"], ' ', $body) . PHP_EOL;
-    file_put_contents(__DIR__ . '/../logs/email.log', $log_entry, FILE_APPEND);
-
-    $sent = @mail($to, $subject, $body, implode("\r\n", $headers));
-    if (!$sent) {
-        error_log("Mail failed to send to $to");
+    $autoload = __DIR__ . '/../vendor/autoload.php';
+    if (!file_exists($autoload)) {
+        error_log("send_email: vendor/autoload.php not found at $autoload - run composer install");
+        return false;
     }
-    return $sent;
+    require_once $autoload;
+
+    if (MAIL_HOST === '' || MAIL_USER === '' || MAIL_PASS === '') {
+        error_log("send_email: SMTP is not configured. Set MAIL_HOST, MAIL_USER and MAIL_PASS in .env before sending mail.");
+        return false;
+    }
+
+    try {
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+
+        $mail->isSMTP();
+        $mail->Host       = MAIL_HOST;
+        $mail->Port       = (int) MAIL_PORT;
+        $mail->SMTPAuth   = true;
+        $mail->Username   = MAIL_USER;
+        $mail->Password   = MAIL_PASS;
+        $mail->SMTPSecure = MAIL_ENCRYPTION === 'ssl'
+            ? PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS
+            : PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->CharSet    = 'UTF-8';
+
+        $mail->setFrom(MAIL_FROM_ADDRESS, MAIL_FROM_NAME);
+        $mail->addAddress($to);
+
+        $mail->isHTML(false);
+        $mail->Subject = $subject;
+        $mail->Body    = $body;
+
+        $sent   = $mail->send();
+        $status = $sent ? 'SENT' : 'FAILED';
+    } catch (PHPMailer\PHPMailer\Exception $e) {
+        error_log("send_email failed to {$to}: " . $e->getMessage());
+        $sent   = false;
+        $status = 'FAILED: ' . $e->getMessage();
+    }
+
+    $log_entry = "[" . date('Y-m-d H:i:s') . "] To: $to | Subject: $subject | Body: "
+        . str_replace(["\r", "\n"], ' ', $body) . " | Result: $status" . PHP_EOL;
+    $log_file = __DIR__ . '/../logs/email.log';
+    if (!is_dir(dirname($log_file))) {
+        @mkdir(dirname($log_file), 0777, true);
+    }
+    @file_put_contents($log_file, $log_entry, FILE_APPEND);
+
+    return (bool) $sent;
 }
 
 function get_pending_ticket_count($pdo)
@@ -788,4 +822,35 @@ function secure_upload($file, $target_dir, $max_size = 5242880)
     }
 
     return false;
+}
+
+
+function mint_password_reset_token($pdo, $user_id)
+{
+    $raw_token = bin2hex(random_bytes(32));
+
+    $stmt = $pdo->prepare("UPDATE users SET password_reset_token = ?, password_reset_expires = DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE id = ?");
+    $stmt->execute([hash('sha256', $raw_token), $user_id]);
+
+    return $raw_token;
+}
+
+
+function invalidate_all_sessions_for_user($pdo, $user_id)
+{
+    $stmt = $pdo->prepare("UPDATE user_sessions SET is_active = 0 WHERE user_id = ?");
+    $stmt->execute([$user_id]);
+}
+
+
+function password_reset_request_active($pdo, $user_id)
+{
+    try {
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM password_reset_requests WHERE user_id = ? AND status IN ('pending','approved')");
+        $stmt->execute([$user_id]);
+        return (int) $stmt->fetchColumn() > 0;
+    } catch (Exception $e) {
+        error_log("Password Reset Request Check Error: " . $e->getMessage());
+        return false;
+    }
 }

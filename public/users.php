@@ -6,7 +6,6 @@ if (!has_role('admin') && !has_role('supervisor')) {
     redirect('dashboard.php');
 }
 
-
 if (isset($_POST['delete_id'])) {
     verify_csrf();
     $id = $_POST['delete_id'];
@@ -17,8 +16,9 @@ if (isset($_POST['delete_id'])) {
 
 
 $stmt = $pdo->query("
-    SELECT * FROM users 
-    WHERE role = 'staff' 
+    SELECT id, username, full_name, email, role, status, created_at
+    FROM users
+    WHERE role = 'staff'
     ORDER BY created_at DESC
 ");
 $users = $stmt->fetchAll();
@@ -34,7 +34,6 @@ $users = $stmt->fetchAll();
         <a href="staff_add.php?role=staff" class="btn btn-primary btn-sm"><i class="fas fa-plus me-2"></i>Add New User</a>
     </div>
 </div>
-
 
 <div class="card border-secondary border-opacity-10 bg-dark">
     <div class="table-responsive">
@@ -107,4 +106,4 @@ $users = $stmt->fetchAll();
     </div>
 </div>
 
-<?php require_once __DIR__ . '/../views/footer.php'; ?>
+<?php require_once __DIR__ . '/../views/footer.php';

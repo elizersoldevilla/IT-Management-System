@@ -6,6 +6,7 @@ uploads/
 *.sql
 security_db_setup.sql
 node_modules/
+/vendor/
 package-lock.json
 desktop/dist/
 desktop/node_modules/

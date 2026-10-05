@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -48,6 +49,62 @@ try {
             $pdo->exec("ALTER TABLE users ADD COLUMN $col $definition");
             echo "Successfully added '$col' column.\n";
         }
+    }
+
+    
+    $sql = "SHOW COLUMNS FROM users LIKE 'password_reset_token'";
+    $stmt = $pdo->query($sql);
+
+    if ($stmt->rowCount() == 0) {
+        $pdo->exec("ALTER TABLE users ADD COLUMN password_reset_token VARCHAR(255) DEFAULT NULL");
+        echo "Successfully added 'password_reset_token' column to 'users' table.\n";
+    } else {
+        echo "'password_reset_token' column already exists.\n";
+    }
+
+    $sql = "SHOW COLUMNS FROM users LIKE 'password_reset_expires'";
+    $stmt = $pdo->query($sql);
+
+    if ($stmt->rowCount() == 0) {
+        $pdo->exec("ALTER TABLE users ADD COLUMN password_reset_expires DATETIME DEFAULT NULL");
+        echo "Successfully added 'password_reset_expires' column to 'users' table.\n";
+    } else {
+        echo "'password_reset_expires' column already exists.\n";
+    }
+
+    $sql = "SHOW INDEX FROM users WHERE Key_name = 'idx_password_reset_token'";
+    $stmt = $pdo->query($sql);
+
+    if ($stmt->rowCount() == 0) {
+        $pdo->exec("ALTER TABLE users ADD INDEX idx_password_reset_token (password_reset_token)");
+        echo "Successfully added 'idx_password_reset_token' index to 'users' table.\n";
+    } else {
+        echo "'idx_password_reset_token' index already exists.\n";
+    }
+
+    $t = $pdo->query("SHOW TABLES LIKE 'password_reset_requests'");
+    if ($t->rowCount() == 0) {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS password_reset_requests (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            requested_ip VARCHAR(45) DEFAULT NULL,
+            status ENUM('pending','approved','email_verified','completed','denied','expired') NOT NULL DEFAULT 'pending',
+            verification_code_hash VARCHAR(64) DEFAULT NULL,
+            verification_expires DATETIME DEFAULT NULL,
+            approved_by INT DEFAULT NULL,
+            approved_at TIMESTAMP NULL DEFAULT NULL,
+            email_verified_at TIMESTAMP NULL DEFAULT NULL,
+            completed_at TIMESTAMP NULL DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX user_id (user_id),
+            INDEX status (status),
+            INDEX idx_prr_status_created (status, created_at),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        echo "Password reset requests table is ready.\n";
+    } else {
+        echo "Password reset requests table already exists.\n";
     }
 
     
@@ -107,23 +164,23 @@ try {
     )");
     echo "Audit logs table is ready.\n";
 
-    $pdo->exec("ALTER TABLE assets ADD COLUMN deleted_at TIMESTAMP NULL DEFAULT NULL");
-    echo "Assets deleted_at column ready.\n";
+    $guarded_columns = [
+        ['assets', 'deleted_at', 'TIMESTAMP NULL DEFAULT NULL', 'Assets deleted_at column ready.'],
+        ['consumables', 'deleted_at', 'TIMESTAMP NULL DEFAULT NULL', 'Consumables deleted_at column ready.'],
+        ['users', 'deleted_at', 'TIMESTAMP NULL DEFAULT NULL', 'Users deleted_at column ready.'],
+        ['assets', 'accountability_due_date', 'DATE NULL DEFAULT NULL', 'Assets accountability_due_date column ready.'],
+        ['assets', 'accountability_signed_by', 'INT NULL DEFAULT NULL', 'Assets accountability_signed_by column ready.'],
+        ['assets', 'accountability_signed_at', 'TIMESTAMP NULL DEFAULT NULL', 'Assets accountability_signed_at column ready.']
+    ];
 
-    $pdo->exec("ALTER TABLE consumables ADD COLUMN deleted_at TIMESTAMP NULL DEFAULT NULL");
-    echo "Consumables deleted_at column ready.\n";
-
-    $pdo->exec("ALTER TABLE users ADD COLUMN deleted_at TIMESTAMP NULL DEFAULT NULL");
-    echo "Users deleted_at column ready.\n";
-
-    $pdo->exec("ALTER TABLE assets ADD COLUMN accountability_due_date DATE NULL DEFAULT NULL");
-    echo "Assets accountability_due_date column ready.\n";
-
-    $pdo->exec("ALTER TABLE assets ADD COLUMN accountability_signed_by INT NULL DEFAULT NULL");
-    echo "Assets accountability_signed_by column ready.\n";
-
-    $pdo->exec("ALTER TABLE assets ADD COLUMN accountability_signed_at TIMESTAMP NULL DEFAULT NULL");
-    echo "Assets accountability_signed_at column ready.\n";
+    foreach ($guarded_columns as $guarded_col) {
+        list($table, $column, $definition, $message) = $guarded_col;
+        $stmt = $pdo->query("SHOW COLUMNS FROM $table LIKE '$column'");
+        if ($stmt->rowCount() == 0) {
+            $pdo->exec("ALTER TABLE $table ADD COLUMN $column $definition");
+            echo "$message\n";
+        }
+    }
 
     $deleted = $pdo->exec("DELETE FROM audit_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 1 YEAR)");
     echo "Audit log retention: purged $deleted logs older than 1 year.\n";
@@ -147,6 +204,8 @@ try {
         CONSTRAINT fk_resource_asset FOREIGN KEY (related_asset_id) REFERENCES assets(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     echo "System resources table is ready.\n";
+
+    echo "\n=== Database update completed successfully. ===\n";
 
 } catch (PDOException $e) {
     die("Database Error: " . $e->getMessage() . "\n");

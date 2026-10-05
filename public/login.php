@@ -470,6 +470,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mfa_code']) && isset(
                     </form>
                 <?php endif; ?>
 
+                <div class="mt-4 text-center">
+                    <p class="text-white-50 small mb-0">Forgotten your password? A verification code will be emailed
+                        to the address on your account.</p>
+                </div>
+
                 <div class="mt-5 text-center">
                     <p class="text-white-50 small" style="font-size: 0.75rem;">
                         &copy; <?php echo date('Y'); ?> IT Management System. <br>Secure Access Encrypted.
