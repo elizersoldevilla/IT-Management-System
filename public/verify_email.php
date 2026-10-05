@@ -27,12 +27,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // to probe which codes exist, are expired, or belong to another account.
     $generic_error = "That verification code is not valid. Please check the code we emailed you and try again.";
 
-    // Brute-force gate: a 6-digit code is guessable well within 15 minutes.
+    // Brute-force gate: a 6-digit code is guessable well within 15 minutes and there is
+    // no admin in the loop any more, so rate limiting is the only defence. Two
+    // independent buckets, both 5 per 900s: one per source IP, one per target account.
+    // A distributed attacker rotating IPs runs the account bucket dry instead, and the
+    // account key is a sha256 of the lowercased address so the raw email is never stored
+    // and case variants collapse into a single budget.
     $rate_key = 'verify_email_' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
-    if (is_rate_limited($pdo, $rate_key, 5, 900)) {
-        $error = "Too many attempts. Please wait 15 minutes and try again.";
-    } elseif ($email === '' || $code === '') {
+    $acct_key = 'verify_acct_' . hash('sha256', strtolower(trim($email)));
+
+    // Order: blank guard first so an empty submission costs no budget, then per-IP,
+    // then per-account, then the code lookup. Both limits surface the SAME message so a
+    // throttle never reveals whether an address is registered.
+    if ($email === '' || $code === '') {
         $error = "Please enter your email address and the verification code.";
+    } elseif (is_rate_limited($pdo, $rate_key, 5, 900) || is_rate_limited($pdo, $acct_key, 5, 900)) {
+        $error = "Too many attempts. Please wait 15 minutes and try again.";
     } else {
         try {
             // Match on the stored hash so the index does the work.
@@ -64,6 +74,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                WHERE id = ?")->execute([$row['id']]);
 
                 log_action($pdo, $row['user_id'], 'PASSWORD_RESET_EMAIL_VERIFIED', "Email verified for password reset: {$row['username']}");
+
+                // Code accepted: refund both budgets so a user who fumbled a couple of
+                // times is not left throttled. Must run before redirect(), which exits.
+                clear_rate_limit($pdo, $rate_key);
+                clear_rate_limit($pdo, $acct_key);
 
                 // Hand the raw token over in the session so it never touches a URL,
                 // browser history, or the Apache access log.

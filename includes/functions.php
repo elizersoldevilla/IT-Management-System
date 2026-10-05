@@ -380,14 +380,32 @@ function ip_in_range($ip, $range)
 }
 
 
+function ip_whitelist_entries()
+{
+    $entries = ['127.0.0.1', '::1'];
+
+    if (!function_exists('env')) {
+        require_once __DIR__ . '/../config/env.php';
+    }
+
+    $configured = env('IP_WHITELIST', '');
+    if (trim($configured) === '') {
+        $configured = '10.61.1.123,10.61.0.0/20';
+    }
+
+    foreach (explode(',', $configured) as $entry) {
+        $entry = trim($entry);
+        if ($entry === '') continue;
+        $entries[] = $entry;
+    }
+
+    return $entries;
+}
+
+
 function is_ip_whitelisted()
 {
-    $whitelist = [
-        '127.0.0.1',
-        '::1',
-        '10.61.1.123',
-        '10.61.0.0/20', 
-    ];
+    $whitelist = ip_whitelist_entries();
 
     
     if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
